@@ -24,8 +24,8 @@
               - ダイアログでは、既存のラベルの中から選択するか、新しいラベル名を入力する
           - ラベルを入力してOKを押すと、同じトラックIDのアノテーションのラベルがそれに変更される
 
-5. [ ] UNDO/REDO機能
-6. [ ] Track IDをそろえる機能
+5. [x] UNDO/REDO機能
+6. [x] Track IDをそろえる機能
 7. [x] COCO形式でのエクスポート（「カスタムJSONを保存」は削除）
     - [x] COCO JSONにエクスポートするときは現在のスコア閾値以下のものはエクスポートしないようにする
     - [x] 時間がかかるのでエクスポート中に進捗を表示するようにする。
@@ -56,3 +56,8 @@
 * masa3: https://deepwiki.com/search/demovideodemowithtextpy-import_4e1187b6-5ca5-4626-93a5-fc55c6f7bc70
 * masa4: https://deepwiki.com/search/demovideodemowithtextpy-import_0d8d6843-e42f-4971-8b71-25d5c486b7e4
 * masa5: https://deepwiki.com/search/masaannotationappbatchaddmodeb_f2c91336-aa02-4c1c-95cd-c4b830021104
+* masa6: https://deepwiki.com/search/_b6058bf0-dcc1-4330-92db-fac72fdfe8ca
+* devin masa 1: https://app.devin.ai/search/undoredoctrlz-ctrlyundoredo_d8795fc4-2a05-4519-9fe2-4b5937082459
+* devin masa 2: https://app.devin.ai/search/track-id-track-id_1cd2a2fc-8a5e-4c8c-8e5a-8ebd75644a41
+* devin masa 3: https://app.devin.ai/search/batchaddmode_13efa3f2-aaf4-4867-bce5-79cd78c7c0a6
+* devin masa 4: https://app.devin.ai/search/editmode_f0d4cd0d-2a09-4130-95c0-a57139cd8f68

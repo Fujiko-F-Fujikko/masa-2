@@ -1,84 +1,93 @@
 # MenuPanel.py  
-"""  
-リファクタリングされたMenuPanel - タブ管理のみに責任を限定  
-各タブの実装は専用のTabManagerに委譲  
-"""  
-from typing import Optional  
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QLabel  
-from PyQt6.QtCore import pyqtSignal, Qt  
-from PyQt6.QtGui import QFont  
+from typing import Dict, List, Any, Optional  
+from pathlib import Path  
+from PyQt6.QtWidgets import (  
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,  
+    QPushButton, QGroupBox, QCheckBox, QLineEdit,  
+    QMessageBox, QTabWidget, QComboBox, QFileDialog,  
+    QDoubleSpinBox, QDialog, QTextEdit, QSplitter  
+)  
+from PyQt6.QtCore import Qt, pyqtSignal  
+from PyQt6.QtGui import QFont, QKeyEvent  
   
-from MASAApplicationService import MASAApplicationService  
-from BasicSettingsTabManager import BasicSettingsTabManager  
-from AnnotationEditTabManager import AnnotationEditTabManager  
-from ObjectListTabManager import ObjectListTabManager  
-from AnnotationInfoSyncManager import AnnotationInfoSyncManager  
-from DataClass import ObjectAnnotation, FrameAnnotation  
+from BasicTabWidget import BasicTabWidget  
+from AnnotationTabWidget import AnnotationTabWidget  
+from ObjectListTabWidget import ObjectListTabWidget  
+from LicenseTabWidget import LicenseTabWidget  
+from ConfigManager import ConfigManager  
+from DataClass import ObjectAnnotation
+from ErrorHandler import ErrorHandler  
   
 class MenuPanel(QWidget):  
-    """新しいアーキテクチャによるMenuPanel - タブ統合のみを担当"""  
+    """タブベースの左側メニューパネル（分割版）"""  
       
-    # 各TabManagerからのシグナルを統合して転送  
+    # シグナル定義（各タブから転送）  
     load_video_requested = pyqtSignal(str)  
     load_json_requested = pyqtSignal(str)  
     export_requested = pyqtSignal(str)  
       
     edit_mode_requested = pyqtSignal(bool)  
-    batch_add_mode_requested = pyqtSignal(bool)  
+    tracking_mode_requested = pyqtSignal(bool)  
+    copy_mode_requested = pyqtSignal(bool)  
+      
     tracking_requested = pyqtSignal(int, str)  
+    copy_annotations_requested = pyqtSignal(int, str)  
       
     label_change_requested = pyqtSignal(object, str)  
     delete_single_annotation_requested = pyqtSignal(object)  
     delete_track_requested = pyqtSignal(int)  
     propagate_label_requested = pyqtSignal(int, str)  
+    align_track_ids_requested = pyqtSignal(str, int)  
+    copy_annotation_requested = pyqtSignal()  
+    paste_annotation_requested = pyqtSignal()  
       
     play_requested = pyqtSignal()  
     pause_requested = pyqtSignal()  
       
     config_changed = pyqtSignal(str, object, str)  
       
-    def __init__(self, app_service: MASAApplicationService, parent=None):  
+    def __init__(self, config_manager: ConfigManager, annotation_repository, command_manager, main_widget, parent=None):  
         super().__init__(parent)  
-        self.app_service = app_service  
-          
-        # タブマネージャーの初期化  
-        self.basic_settings_tab: Optional[BasicSettingsTabManager] = None  
-        self.annotation_edit_tab: Optional[AnnotationEditTabManager] = None  
-        self.object_list_tab: Optional[ObjectListTabManager] = None  
-        self.info_sync_manager: Optional[AnnotationInfoSyncManager] = None  
-          
-        # UI要素  
-        self.tab_widget: Optional[QTabWidget] = None  
+        self.config_manager = config_manager  
+        self.annotation_repository = annotation_repository  
+        self.command_manager = command_manager  
+        self.main_widget = main_widget  # MASAAnnotationWidgetへの参照  
+        self.clipboard_annotation = None  # クリップボード機能をMenuPanelに移動  
           
         # 固定幅を削除し、最小幅のみ設定  
         self.setMinimumWidth(250)  
         self.setStyleSheet("background-color: #f0f0f0; border-right: 1px solid #ccc;")  
           
         self.setup_ui()  
-        self.connect_tab_signals()  
-          
+        self._connect_signals()  
+        self._connect_config_signals()  
+      
     def setup_ui(self):  
-        """UIを構築"""  
         layout = QVBoxLayout()  
         layout.setSpacing(10)  
         layout.setContentsMargins(10, 10, 10, 10)  
           
-        # タイトル  
         title_label = QLabel("MASA Annotation Tool")  
         title_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))  
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)  
         layout.addWidget(title_label)  
           
-        # タブウィジェット設定  
-        self.setup_tab_widget(layout)  
-          
-        self.setLayout(layout)  
-          
-    def setup_tab_widget(self, parent_layout):  
-        """タブウィジェットを設定"""  
+        # タブウィジェットを作成  
         self.tab_widget = QTabWidget()  
           
-        # タブスタイル設定  
+        # 各タブウィジェットを作成  
+        self.basic_tab = BasicTabWidget(self.config_manager, self.annotation_repository, self.command_manager, self.main_widget, self)  
+        self.annotation_tab = AnnotationTabWidget(self.config_manager, self.annotation_repository, self.command_manager, self.main_widget, self)  
+        self.object_list_tab = ObjectListTabWidget(self.config_manager, self.annotation_repository, self.command_manager, self.main_widget, self)  
+        self.license_tab = LicenseTabWidget(self.config_manager, self.annotation_repository, self.command_manager, self.main_widget, self)  
+          
+        # タブに追加  
+        self.tab_widget.addTab(self.basic_tab, "⚙️ Basic Settings")  
+        self.tab_widget.addTab(self.annotation_tab, "📝 Annotation")  
+        self.tab_widget.addTab(self.object_list_tab, "📋 Object List")  
+        self.tab_widget.addTab(self.license_tab, "📄 License")  
+          
+        # タブのスタイルを設定  
         tab_style = """  
             QTabWidget::pane {  
                 border: 2px solid #ccc;  
@@ -102,126 +111,241 @@ class MenuPanel(QWidget):
         """  
         self.tab_widget.setStyleSheet(tab_style)  
           
-        # 各タブマネージャーを作成・追加（修正版 - 正しいapp_serviceを渡す）  
-        self.basic_settings_tab = BasicSettingsTabManager(self.app_service, self)  
-        self.tab_widget.addTab(self.basic_settings_tab, "⚙️ 基本設定")  
-          
-        self.annotation_edit_tab = AnnotationEditTabManager(self.app_service, self)  
-        self.tab_widget.addTab(self.annotation_edit_tab, "📝 アノテーション")  
-          
-        self.object_list_tab = ObjectListTabManager(self.app_service, self)  
-        self.tab_widget.addTab(self.object_list_tab, "📋 オブジェクト一覧")  
-          
-        # 情報同期マネージャーを初期化  
-        self.info_sync_manager = AnnotationInfoSyncManager(self.app_service, self)  
-        self.info_sync_manager.set_managed_tabs(  
-            self.annotation_edit_tab,  
-            self.object_list_tab,  
-            self.basic_settings_tab  
-        )  
-          
-        parent_layout.addWidget(self.tab_widget)  
-          
-    def connect_tab_signals(self):  
-        """各タブのシグナルを接続"""  
-        if self.basic_settings_tab:  
-            # BasicSettingsTabManagerのシグナル接続  
-            self.basic_settings_tab.load_video_requested.connect(self.load_video_requested.emit)  
-            self.basic_settings_tab.load_json_requested.connect(self.load_json_requested.emit)  
-            self.basic_settings_tab.export_requested.connect(self.export_requested.emit)  
-            self.basic_settings_tab.play_requested.connect(self.play_requested.emit)  
-            self.basic_settings_tab.pause_requested.connect(self.pause_requested.emit)  
-            self.basic_settings_tab.config_changed.connect(self.config_changed.emit)  
-              
-        if self.annotation_edit_tab:  
-            # AnnotationEditTabManagerのシグナル接続  
-            self.annotation_edit_tab.edit_mode_requested.connect(self.edit_mode_requested.emit)  
-            self.annotation_edit_tab.batch_add_mode_requested.connect(self.batch_add_mode_requested.emit)  
-            self.annotation_edit_tab.tracking_requested.connect(self.tracking_requested.emit)  
-            self.annotation_edit_tab.label_change_requested.connect(self.label_change_requested.emit)  
-            self.annotation_edit_tab.delete_single_annotation_requested.connect(self.delete_single_annotation_requested.emit)  
-            self.annotation_edit_tab.delete_track_requested.connect(self.delete_track_requested.emit)  
-            self.annotation_edit_tab.propagate_label_requested.connect(self.propagate_label_requested.emit)  
-              
-        if self.object_list_tab:  
-            # ObjectListTabManagerのシグナル接続  
-            self.object_list_tab.config_changed.connect(self.config_changed.emit)  
-              
-    # ===== 公開メソッド（各タブマネージャーへの委譲） =====  
+        layout.addWidget(self.tab_widget)  
+        self.setLayout(layout)  
       
-    def get_basic_settings_tab(self) -> Optional[BasicSettingsTabManager]:  
-        """基本設定タブを取得"""  
-        return self.basic_settings_tab  
+    def _connect_signals(self):  
+        """各タブからのシグナルを上位に転送"""  
+        # BasicTabからのシグナル転送  
+        self.basic_tab.load_video_requested.connect(self.load_video_requested)  
+        self.basic_tab.load_json_requested.connect(self.load_json_requested)  
+        self.basic_tab.export_requested.connect(self.export_requested)  
+        self.basic_tab.play_requested.connect(self.play_requested)  
+        self.basic_tab.pause_requested.connect(self.pause_requested)  
+        self.basic_tab.config_changed.connect(self.config_changed)  
           
-    def get_annotation_edit_tab(self) -> Optional[AnnotationEditTabManager]:  
-        """アノテーション編集タブを取得"""  
-        return self.annotation_edit_tab  
+        # AnnotationTabからのシグナル転送  
+        self.annotation_tab.edit_mode_requested.connect(self.edit_mode_requested)  
+        self.annotation_tab.tracking_mode_requested.connect(self.tracking_mode_requested)  
+        self.annotation_tab.copy_mode_requested.connect(self.copy_mode_requested)  
+        self.annotation_tab.tracking_requested.connect(self.tracking_requested)  
+        self.annotation_tab.copy_annotations_requested.connect(self.copy_annotations_requested)  
+        self.annotation_tab.label_change_requested.connect(self.label_change_requested)  
+        self.annotation_tab.delete_single_annotation_requested.connect(self.delete_single_annotation_requested)  
+        self.annotation_tab.delete_track_requested.connect(self.delete_track_requested)  
+        self.annotation_tab.propagate_label_requested.connect(self.propagate_label_requested)  
+        self.annotation_tab.align_track_ids_requested.connect(self.align_track_ids_requested)  
+        self.annotation_tab.copy_annotation_requested.connect(self.copy_annotation_requested)  
+        self.annotation_tab.paste_annotation_requested.connect(self.paste_annotation_requested)  
+      
+    def _connect_config_signals(self):  
+        """ConfigManagerからの設定変更シグナルを接続"""  
+        self.config_manager.add_observer(self._on_config_changed)  
+      
+    def _on_config_changed(self, key: str, value: object, config_type: str):  
+        """ConfigManagerからの設定変更を処理"""  
+        if config_type == "display" and key == "score_threshold":  
+            self.basic_tab.score_threshold_spinbox.setValue(value)  
+      
+    def keyPressEvent(self, event: QKeyEvent):  
+        """MenuPanel関連のキーボードショートカット"""  
+        # Ctrlキー組み合わせの処理  
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:  
+            if event.key() == Qt.Key.Key_O:  
+                self.basic_tab._on_load_video_clicked("")  
+                event.accept()  
+                return  
+            elif event.key() == Qt.Key.Key_L:  
+                self.basic_tab._on_load_json_clicked("")  
+                event.accept()  
+                return  
+            elif event.key() == Qt.Key.Key_S:  
+                if self.basic_tab.save_masa_json_btn.isEnabled():  
+                    self.basic_tab._on_export_masa_clicked()  
+                event.accept()  
+                return  
+            elif event.key() == Qt.Key.Key_Z:  
+                self.annotation_tab._on_undo_clicked()  
+                event.accept()  
+                return  
+            elif event.key() == Qt.Key.Key_Y:  
+                self.annotation_tab._on_redo_clicked()  
+                event.accept()  
+                return  
+            elif event.key() == Qt.Key.Key_C:  
+                if (self.annotation_tab.current_selected_annotation and   
+                    self.annotation_tab.edit_mode_btn.isChecked() and  
+                    self.annotation_tab.copy_annotation_btn.isEnabled()):  
+                    self.annotation_tab._on_copy_annotation_clicked()  
+                event.accept()  
+                return  
+            elif event.key() == Qt.Key.Key_V:  
+                if (self.annotation_tab.edit_mode_btn.isChecked() and  
+                    self.annotation_tab.paste_annotation_btn.isEnabled()):  
+                    self.annotation_tab._on_paste_annotation_clicked()  
+                event.accept()  
+                return  
           
-    def get_object_list_tab(self) -> Optional[ObjectListTabManager]:  
-        """オブジェクト一覧タブを取得"""  
-        return self.object_list_tab  
+        # Ctrl+Shift組み合わせの処理  
+        if event.modifiers() == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):  
+            if event.key() == Qt.Key.Key_S:  
+                if self.basic_tab.save_coco_json_btn.isEnabled():  
+                    self.basic_tab._on_export_coco_clicked()  
+                event.accept()  
+                return  
           
-    def update_video_info(self, file_path: str, total_frames: int):  
-        """動画情報を更新"""  
-        if self.basic_settings_tab:  
-            self.basic_settings_tab.update_video_info(file_path, total_frames)  
-              
-    def update_json_info(self, file_path: str, annotation_count: int):  
-        """JSON情報を更新"""  
-        if self.basic_settings_tab:  
-            self.basic_settings_tab.update_json_info(file_path, annotation_count)  
-              
-    def update_annotation_count(self, total: int, manual: int):  
-        """アノテーション数を更新"""  
-        if self.info_sync_manager:  
-            self.info_sync_manager.update_annotation_count(total, manual)  
-              
-    def update_selected_annotation_info(self, annotation: Optional[ObjectAnnotation]):  
-        """選択アノテーション情報を更新"""  
-        if self.info_sync_manager:  
-            self.info_sync_manager.update_selected_annotation_info(annotation)  
-              
-    def initialize_label_combo(self, labels: list):  
-        """ラベルコンボボックスを初期化"""  
-        if self.info_sync_manager:  
-            self.info_sync_manager.initialize_label_combo(labels)  
-              
-    def update_current_frame_objects(self, frame_id: int, frame_annotation: Optional[FrameAnnotation]):  
-        """現在フレームのオブジェクト一覧を更新"""  
-        if self.info_sync_manager:  
-            self.info_sync_manager.update_current_frame_objects(frame_id, frame_annotation)  
-              
-    def update_object_list_selection(self, annotation: Optional[ObjectAnnotation]):  
-        """オブジェクト一覧の選択を更新"""  
-        if self.info_sync_manager:  
-            self.info_sync_manager.sync_object_list_selection(annotation)  
-              
-    def update_undo_redo_buttons(self, command_manager):  
-        """Undo/Redoボタンの状態を更新"""  
-        if self.info_sync_manager:  
-            self.info_sync_manager.update_undo_redo_buttons(command_manager)  
-              
-    def update_tracking_progress(self, message: str, progress: int = -1):  
-        """追跡進捗を更新"""  
-        if self.annotation_edit_tab:  
-            self.annotation_edit_tab.update_tracking_progress(message, progress)  
-              
+        # 単独キーのショートカット処理  
+        if event.key() == Qt.Key.Key_E:  
+            if self.annotation_tab.edit_mode_btn.isEnabled():  
+                current_state = self.annotation_tab.edit_mode_btn.isChecked()  
+                self.annotation_tab.edit_mode_btn.setChecked(not current_state)  
+                self.annotation_tab._on_edit_mode_clicked(not current_state)  
+            event.accept()  
+        elif event.key() == Qt.Key.Key_T:  
+            if self.annotation_tab.tracking_annotation_btn.isEnabled():  
+                current_state = self.annotation_tab.tracking_annotation_btn.isChecked()  
+                self.annotation_tab.tracking_annotation_btn.setChecked(not current_state)  
+                self.annotation_tab._on_tracking_annotation_clicked(not current_state)  
+            event.accept()  
+        elif event.key() == Qt.Key.Key_C:  
+            if self.annotation_tab.copy_annotations_btn.isEnabled():  
+                current_state = self.annotation_tab.copy_annotations_btn.isChecked()  
+                self.annotation_tab.copy_annotations_btn.setChecked(not current_state)  
+                self.annotation_tab._on_copy_annotations_clicked(not current_state)  
+            event.accept()  
+        elif event.key() == Qt.Key.Key_X:  
+            if (self.annotation_tab.current_selected_annotation and   
+                self.annotation_tab.delete_single_annotation_btn.isEnabled()):  
+                self.annotation_tab._on_delete_single_annotation_clicked()  
+            event.accept()  
+        elif event.key() == Qt.Key.Key_D:  
+            if (self.annotation_tab.current_selected_annotation and   
+                self.annotation_tab.delete_track_btn.isEnabled()):  
+                self.annotation_tab._on_delete_track_clicked()  
+            event.accept()  
+        elif event.key() == Qt.Key.Key_P:  
+            if (self.annotation_tab.current_selected_annotation and   
+                self.annotation_tab.propagate_label_btn.isEnabled()):  
+                self.annotation_tab._on_propagate_label_clicked()  
+            event.accept()  
+        elif event.key() == Qt.Key.Key_A:  
+            if (self.annotation_tab.current_selected_annotation and   
+                self.annotation_tab.align_track_ids_btn.isEnabled()):  
+                self.annotation_tab._on_align_track_ids_clicked()  
+            event.accept()  
+        elif event.key() == Qt.Key.Key_R:  
+            if self.annotation_tab.execute_add_btn.isEnabled():  
+                self.annotation_tab._on_complete_tracking_clicked()  
+            event.accept()  
+        else:  
+            super().keyPressEvent(event)  
+      
+    # 各タブへのアクセス用プロパティ  
+    @property  
+    def current_selected_annotation(self):  
+        return self.annotation_tab.current_selected_annotation  
+      
+    @current_selected_annotation.setter  
+    def current_selected_annotation(self, value):  
+        self.annotation_tab.current_selected_annotation = value  
+      
+    @property  
+    def current_selected_annotation_label(self):  
+        return self.annotation_tab.current_selected_annotation_label  
+      
+    @current_selected_annotation_label.setter  
+    def current_selected_annotation_label(self, value):  
+        self.annotation_tab.current_selected_annotation_label = value  
+      
+    # 各タブのUIコンポーネントへのアクセス用プロパティ  
+    @property  
+    def edit_mode_btn(self):  
+        return self.annotation_tab.edit_mode_btn  
+      
+    @property  
+    def tracking_annotation_btn(self):  
+        return self.annotation_tab.tracking_annotation_btn  
+      
+    @property  
+    def copy_annotations_btn(self):  
+        return self.annotation_tab.copy_annotations_btn  
+      
+    @property  
+    def execute_add_btn(self):  
+        return self.annotation_tab.execute_add_btn  
+      
+    @property  
+    def save_masa_json_btn(self):  
+        return self.basic_tab.save_masa_json_btn  
+      
+    @property  
+    def save_coco_json_btn(self):  
+        return self.basic_tab.save_coco_json_btn  
+      
+    @property  
+    def copy_annotation_btn(self):  
+        return self.annotation_tab.copy_annotation_btn  
+      
+    @property  
+    def paste_annotation_btn(self):  
+        return self.annotation_tab.paste_annotation_btn  
+      
+    # 各タブのメソッドへの転送  
+    def update_video_info(self, video_path: str, total_frames: int):  
+        self.basic_tab.update_video_info(video_path, total_frames)  
+        self.annotation_tab.edit_mode_btn.setEnabled(True)  
+      
+    def update_json_info(self, json_path: str, annotation_count: int):  
+        self.basic_tab.update_json_info(json_path, annotation_count)  
+      
     def update_export_progress(self, message: str):  
-        """エクスポート進捗を更新"""  
-        if self.basic_settings_tab:  
-            self.basic_settings_tab.update_export_progress(message)  
-              
-    def set_tracking_enabled(self, enabled: bool):  
-        """追跡機能の有効/無効を設定"""  
-        if self.annotation_edit_tab:  
-            self.annotation_edit_tab.set_tracking_enabled(enabled)  
-              
-    def set_object_list_score_threshold(self, threshold: float):  
-        """オブジェクト一覧のスコア閾値を設定"""  
-        if self.object_list_tab:  
-            self.object_list_tab.set_score_threshold(threshold)  
-              
+        self.basic_tab.update_export_progress(message)  
+      
+    def update_annotation_count(self, count: int, manual_count: int = None):  
+        if manual_count is not None:  
+            loaded_count = count - manual_count  
+            self.annotation_tab.annotation_count_label.setText(  
+                f"All Annotation count: {count}\n"  
+                f"(auto: {loaded_count}, manual: {manual_count})"  
+            )  
+        else:  
+            self.annotation_tab.annotation_count_label.setText(f"Annotation count: {count}")  
+      
+    def update_range_info(self, start_frame: int, end_frame: int):  
+        self.annotation_tab.update_range_info(start_frame, end_frame)  
+      
+    def update_tracking_progress(self, progress_text: str):  
+        self.annotation_tab.update_tracking_progress(progress_text)  
+      
+    def update_frame_display(self, current_frame: int, total_frames: int):  
+        self.basic_tab.update_frame_info(current_frame, total_frames)  
+      
     def reset_playback_button(self):  
-        """再生ボタンをリセット"""  
-        if self.basic_settings_tab:  
-            self.basic_settings_tab.reset_playback_button()
+        self.basic_tab.set_play_button_state(False)  
+      
+    def get_display_options(self):  
+        return self.basic_tab.get_display_options()  
+      
+    def update_selected_annotation_info(self, annotation: Optional[ObjectAnnotation]):  
+        self.annotation_tab.update_selected_annotation_info(annotation)  
+      
+    def initialize_label_combo(self, labels: List[str]):  
+        self.annotation_tab.initialize_label_combo(labels)  
+      
+    def set_tracking_enabled(self, enabled: bool):  
+        self.annotation_tab.set_tracking_enabled(enabled)  
+      
+    def update_undo_redo_buttons(self, command_manager):  
+        self.annotation_tab.update_undo_redo_buttons(command_manager)  
+      
+    def update_current_frame_objects(self, frame_id: int, frame_annotation=None):  
+        self.object_list_tab.update_current_frame_objects(frame_id, frame_annotation)  
+      
+    def set_object_list_score_threshold(self, threshold: float):  
+        self.object_list_tab.set_object_list_score_threshold(threshold)  
+      
+    def update_object_list_selection(self, annotation):  
+        self.object_list_tab.update_object_list_selection(annotation)  
+      
+    def get_object_list_widget(self):  
+        return self.object_list_tab.get_object_list_widget()
