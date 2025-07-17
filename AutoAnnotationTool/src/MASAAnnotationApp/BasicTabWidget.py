@@ -3,9 +3,8 @@ from pathlib import Path
 from datetime import datetime  
   
 from PyQt6.QtWidgets import (  
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,  
-    QPushButton, QGroupBox, QCheckBox, QFileDialog,  
-    QDoubleSpinBox  
+    QWidget, QVBoxLayout, QLabel,  
+    QPushButton, QGroupBox, QFileDialog
 )  
 from PyQt6.QtCore import pyqtSignal  
   
@@ -23,9 +22,6 @@ class BasicTabWidget(QWidget):
     load_video_requested = pyqtSignal(str)  
     load_json_requested = pyqtSignal(str)  
     export_requested = pyqtSignal(str)  
-    play_requested = pyqtSignal()  
-    pause_requested = pyqtSignal()  
-    config_changed = pyqtSignal(str, object, str)  
       
     def __init__(self, config_manager: ConfigManager, annotation_repository, command_manager, main_widget, parent=None):  
         super().__init__(parent)  
@@ -39,7 +35,6 @@ class BasicTabWidget(QWidget):
         self.export_worker = None  
           
         self.setup_ui()  
-        self._connect_config_signals()  
       
     def setup_ui(self):  
         layout = QVBoxLayout()  
@@ -82,101 +77,9 @@ class BasicTabWidget(QWidget):
         file_group.setLayout(file_layout)  
         layout.addWidget(file_group)  
           
-        # 再生コントロールグループ  
-        playback_group = QGroupBox("Playback Controls")  
-        playback_layout = QVBoxLayout()  
-          
-        self.play_btn = QPushButton("Play (Space)")  
-        self.play_btn.setEnabled(False)  
-        self.play_btn.clicked.connect(self._on_play_clicked)  
-        playback_layout.addWidget(self.play_btn)  
-          
-        self.frame_label = QLabel("Frame: 0/0")  
-        playback_layout.addWidget(self.frame_label)  
-          
-        playback_group.setLayout(playback_layout)  
-        layout.addWidget(playback_group)  
-          
-        # 表示設定グループ  
-        display_group = QGroupBox("Display Settings")  
-        display_layout = QVBoxLayout()  
-          
-        self.show_manual_cb = QCheckBox("Show Manual Annotations")  
-        self.show_manual_cb.setChecked(True)  
-        self.show_manual_cb.stateChanged.connect(self._on_display_option_changed)  
-        display_layout.addWidget(self.show_manual_cb)  
-          
-        self.show_auto_cb = QCheckBox("Show Auto Annotations")  
-        self.show_auto_cb.setChecked(True)  
-        self.show_auto_cb.stateChanged.connect(self._on_display_option_changed)  
-        display_layout.addWidget(self.show_auto_cb)  
-          
-        self.show_ids_cb = QCheckBox("Show Track ID")  
-        self.show_ids_cb.setChecked(True)  
-        self.show_ids_cb.stateChanged.connect(self._on_display_option_changed)  
-        display_layout.addWidget(self.show_ids_cb)  
-          
-        self.show_confidence_cb = QCheckBox("Show Confidence")  
-        self.show_confidence_cb.setChecked(True)  
-        self.show_confidence_cb.stateChanged.connect(self._on_display_option_changed)  
-        display_layout.addWidget(self.show_confidence_cb)  
-          
-        # スコア閾値設定  
-        threshold_layout = QHBoxLayout()  
-        threshold_layout.addWidget(QLabel("Score Threshold:"))  
-          
-        self.score_threshold_spinbox = QDoubleSpinBox()  
-        self.score_threshold_spinbox.setRange(0.0, 1.0)  
-        self.score_threshold_spinbox.setSingleStep(0.1)  
-        self.score_threshold_spinbox.setValue(0.2)  
-        self.score_threshold_spinbox.valueChanged.connect(self._on_score_threshold_changed)  
-        threshold_layout.addWidget(self.score_threshold_spinbox)  
-          
-        display_layout.addLayout(threshold_layout)  
-          
-        # チェックボックスのスタイル設定  
-        simple_checkbox_style = """  
-        QCheckBox::indicator:checked {  
-            background-color: white;  
-            border: 2px solid #4CAF50;  
-            background-image: url(file:///../AutoAnnotationTool/resources/checkmark_green_thick.svg);  
-            background-repeat: no-repeat;  
-            background-position: center;  
-        }  
-        QCheckBox::indicator:unchecked {  
-            background-color: white;  
-            border: 2px solid #ccc;  
-        }  
-        """  
-        self.show_manual_cb.setStyleSheet(simple_checkbox_style)  
-        self.show_auto_cb.setStyleSheet(simple_checkbox_style)  
-        self.show_ids_cb.setStyleSheet(simple_checkbox_style)  
-        self.show_confidence_cb.setStyleSheet(simple_checkbox_style)  
-          
-        display_group.setLayout(display_layout)  
-        layout.addWidget(display_group)  
-          
         layout.addStretch()  
         self.setLayout(layout)  
-      
-    def _connect_config_signals(self):  
-        """ConfigManagerからの設定変更シグナルを接続"""  
-        self.config_manager.add_observer(self._on_config_changed)  
-      
-    def _on_config_changed(self, key: str, value: object, config_type: str):  
-        """ConfigManagerからの設定変更を処理"""  
-        if config_type == "display":  
-            if key == "score_threshold":  
-                self.score_threshold_spinbox.setValue(value)  
-            elif key == "show_manual_annotations":  
-                self.show_manual_cb.setChecked(value)  
-            elif key == "show_auto_annotations":  
-                self.show_auto_cb.setChecked(value)  
-            elif key == "show_ids":  
-                self.show_ids_cb.setChecked(value)  
-            elif key == "show_confidence":  
-                self.show_confidence_cb.setChecked(value)  
-      
+                  
     # ファイル操作関連メソッド（MASAAnnotationWidgetから移動）  
     @ErrorHandler.handle_with_dialog("Video Load Error")  
     def _on_load_video_clicked(self, _: str = ""):  
@@ -228,7 +131,7 @@ class BasicTabWidget(QWidget):
                 self.main_widget.video_control.set_current_frame(0)  
                   
                 self.main_widget.menu_panel.update_video_info(file_path, self.main_widget.video_manager.get_total_frames())  
-                self.play_btn.setEnabled(True)  
+                self.main_widget.video_control.set_play_button_enabled(True)  
                   
                 ErrorHandler.show_info_dialog(f"Video loaded: {file_path}", "Success")  
             else:  
@@ -324,32 +227,7 @@ class BasicTabWidget(QWidget):
                     ErrorHandler.show_error_dialog(f"Unsupported export format: {format_type}", "Error")  
         except Exception as e:  
             ErrorHandler.show_error_dialog(f"Failed to export: {str(e)}", "Export Error")  
-      
-    def _on_play_clicked(self):  
-        """再生ボタンのクリックハンドラ"""  
-        if self.play_btn.text() == "Play (Space)":  
-            self.play_requested.emit()  
-        else:  
-            self.pause_requested.emit()  
-      
-    def _on_display_option_changed(self):  
-        """表示オプション変更時の処理"""  
-        display_options = {  
-            "show_manual_annotations": self.show_manual_cb.isChecked(),  
-            "show_auto_annotations": self.show_auto_cb.isChecked(),  
-            "show_ids": self.show_ids_cb.isChecked(),  
-            "show_confidence": self.show_confidence_cb.isChecked()  
-        }  
-          
-        for key, value in display_options.items():  
-            self.config_manager.update_config(key, value, config_type="display")  
-            self.config_changed.emit(key, value, "display")  
-      
-    def _on_score_threshold_changed(self, value: float):  
-        """スコア閾値変更時の処理"""  
-        self.config_manager.update_config("score_threshold", value, config_type="display")  
-        self.config_changed.emit("score_threshold", value, "display")  
-      
+                  
     # UI更新メソッド  
     def update_video_info(self, video_path: str, total_frames: int):  
         """動画情報を更新"""  
@@ -368,24 +246,3 @@ class BasicTabWidget(QWidget):
     def update_export_progress(self, message: str):  
         """エクスポート進捗を更新"""  
         self.export_progress_label.setText(message)  
-      
-    def update_frame_info(self, current_frame: int, total_frames: int):  
-        """フレーム情報を更新"""  
-        self.frame_label.setText(f"Frame: {current_frame}/{total_frames - 1}")  
-      
-    def set_play_button_state(self, is_playing: bool):  
-        """再生ボタンの状態を設定"""  
-        if is_playing:  
-            self.play_btn.setText("Pause (Space)")  
-        else:  
-            self.play_btn.setText("Play (Space)")  
-      
-    def get_display_options(self):  
-        """現在の表示オプションを取得"""  
-        return {  
-            "show_manual_annotations": self.show_manual_cb.isChecked(),  
-            "show_auto_annotations": self.show_auto_cb.isChecked(),  
-            "show_ids": self.show_ids_cb.isChecked(),  
-            "show_confidence": self.show_confidence_cb.isChecked(),  
-            "score_threshold": self.score_threshold_spinbox.value()  
-        }
