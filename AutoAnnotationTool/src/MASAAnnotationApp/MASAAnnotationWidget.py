@@ -1,12 +1,13 @@
 # MASAAnnotationWidget.py  
-from typing import List, Optional, Tuple      
+from typing import List, Optional, Tuple, Dict
   
 from PyQt6.QtWidgets import (      
     QWidget, QHBoxLayout, QVBoxLayout,
-    QPushButton, QApplication, QSplitter     
+    QPushButton, QApplication, QSplitter,
+    QMessageBox, QDialog
 )  
 from PyQt6.QtCore import Qt, QObject, QEvent      
-      
+
 from DataClass import BoundingBox, ObjectAnnotation      
 from MenuPanel import MenuPanel      
 from VideoControlPanel import VideoControlPanel      
@@ -19,8 +20,11 @@ from ObjectTracker import ObjectTracker
 from TrackingWorker import TrackingWorker      
 from ConfigManager import ConfigManager      
 from ErrorHandler import ErrorHandler      
+from TrackingResultConfirmDialog import TrackingResultConfirmDialog  
 from CommandPattern import CommandManager, DeleteAnnotationCommand, DeleteTrackCommand, \
-                            UpdateLabelCommand, UpdateLabelByTrackCommand, AlignTrackIdsByLabelCommand  
+                            UpdateLabelCommand, UpdateLabelByTrackCommand, AlignTrackIdsByLabelCommand, \
+                            AddAnnotationCommand  
+
   
 class ButtonKeyEventFilter(QObject):      
     def eventFilter(self, obj, event):      
@@ -135,6 +139,14 @@ class MASAAnnotationWidget(QWidget):
 
         # VideoPreviewWidgetからのアノテーション選択シグナルを接続  
         self.video_preview.annotation_selected.connect(self.on_annotation_selected)
+
+        # コピー・ペースト関連のシグナル接続
+        self.menu_panel.copy_annotation_requested.connect(self.copy_selected_annotation)  
+        self.menu_panel.paste_annotation_requested.connect(self.paste_annotation)
+
+        # トラッキングとコピー関連のシグナル接続を追加  
+        self.menu_panel.tracking_requested.connect(self.start_tracking)  
+        self.menu_panel.copy_annotations_requested.connect(self.start_copy_annotations)
 
     # 残存する主要メソッド（コンポーネント間調整役）  
     def set_edit_mode(self, enabled: bool):    
@@ -294,25 +306,27 @@ class MASAAnnotationWidget(QWidget):
         if hasattr(self.menu_panel, 'update_undo_redo_buttons'):    
             self.menu_panel.update_undo_redo_buttons(self.command_manager)  
   
-    # トラッキング関連のコールバック（動的に接続される）  
-    def on_tracking_completed(self, results):  
-        """トラッキング完了時の処理"""  
-        if results:  
+    def on_tracking_completed(self, results: Dict[int, List[ObjectAnnotation]]):  
+        """追跡完了時の処理（確認ダイアログ付き）"""  
+        # 確認ダイアログを表示  
+        dialog = TrackingResultConfirmDialog(results, self.video_manager, self)  
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.approved:  
+            # ユーザーが承認した場合のみ追加  
+            # dialog.tracking_resultsにはユーザーが選択した結果が含まれる  
+            for frame_id, annotations in dialog.tracking_results.items():  
+                for annotation in annotations:  
+                    self.annotation_repository.add_annotation(annotation)  
+            
             self.update_annotation_count()  
             self.video_preview.update_frame_display()  
-              
-            # 現在フレームのオブジェクト一覧を更新  
-            current_frame = self.video_control.current_frame  
-            frame_annotation = self.annotation_repository.get_annotations(current_frame)  
-            self.menu_panel.update_current_frame_objects(current_frame, frame_annotation)  
-              
-            ErrorHandler.show_info_dialog("Tracking completed successfully.", "Tracking Complete")  
+            ErrorHandler.show_info_dialog("Tracking completed and annotations added!", "Tracking Complete")  
         else:  
-            ErrorHandler.show_warning_dialog("Tracking failed or was cancelled.", "Tracking Failed")  
-          
-        # トラッキングワーカーをクリーンアップ  
-        self.tracking_worker = None  
-  
+            ErrorHandler.show_info_dialog("Tracking results were discarded.", "Tracking Cancelled")
+
+        # すべてのモードを初期状態に戻す  
+        #self.reset_all_modes_to_initial_state()  
+
     def on_tracking_progress(self, current: int, total: int):  
         """トラッキング進捗更新時の処理"""  
         progress_text = f"Processing frame {current}/{total}..."  
@@ -322,8 +336,10 @@ class MASAAnnotationWidget(QWidget):
         """トラッキングエラー時の処理"""  
         self.menu_panel.update_tracking_progress("Tracking failed.")  
         ErrorHandler.show_error_dialog(f"Tracking error: {error_message}", "Tracking Error")  
-        self.tracking_worker = None  
-  
+
+        # すべてのモードを初期状態に戻す  
+        #self.reset_all_modes_to_initial_state()  
+
     def on_playback_frame_changed(self, frame_id: int):  
         """再生時のフレーム変更処理"""  
         self.video_control.set_current_frame(frame_id)  
@@ -424,6 +440,256 @@ class MASAAnnotationWidget(QWidget):
                 self.menu_panel.update_undo_redo_buttons(self.command_manager)  
         finally:  
             self._updating_selection = False
+
+    def copy_selected_annotation(self):  
+        """選択中のアノテーションをクリップボードにコピー"""  
+        selected_annotation = self.menu_panel.current_selected_annotation  
+        if not selected_annotation:  
+            ErrorHandler.show_warning_dialog("No annotation selected to copy.", "Copy Error")  
+            return  
+        
+        # MenuPanelのクリップボードに保存（ディープコピー）  
+        self.menu_panel.clipboard_annotation = ObjectAnnotation(  
+            object_id=selected_annotation.object_id,  
+            frame_id=selected_annotation.frame_id,  
+            bbox=BoundingBox(  
+                selected_annotation.bbox.x1,  
+                selected_annotation.bbox.y1,  
+                selected_annotation.bbox.x2,  
+                selected_annotation.bbox.y2,  
+                confidence=selected_annotation.bbox.confidence  
+            ),  
+            label=selected_annotation.label,  
+            is_manual=selected_annotation.is_manual,  
+            track_confidence=selected_annotation.track_confidence,  
+            is_manual_added=selected_annotation.is_manual_added  
+        )  
+        
+        # paste_annotation_btnの状態を更新  
+        self._update_paste_button_state()  
+        print(f"--- Copied annotation: {selected_annotation.label} ---")
+
+    def _update_paste_button_state(self):  
+        """paste_annotation_btnの状態を更新"""  
+        if hasattr(self.menu_panel, 'paste_annotation_btn'):  
+            paste_enabled = (self.menu_panel.clipboard_annotation is not None and   
+                            self.menu_panel.edit_mode_btn.isChecked())  
+            self.menu_panel.paste_annotation_btn.setEnabled(paste_enabled)
+
+    def paste_annotation(self):  
+        """クリップボードのアノテーションを現在のフレームにペースト"""  
+        if not self.menu_panel.clipboard_annotation:  
+            ErrorHandler.show_warning_dialog("No annotation in clipboard.", "Paste Error")  
+            return  
+        
+        if not self.video_manager:  
+            ErrorHandler.show_warning_dialog("Please load a video file first.", "Paste Error")  
+            return  
+        
+        current_frame = self.video_control.current_frame  
+        
+        # 現在のconfidence閾値を取得  
+        display_config = self.config_manager.get_full_config(config_type="display")  
+        threshold = display_config.score_threshold  
+        
+        # 現在のフレームのアノテーションを取得して重複チェック  
+        frame_annotation = self.annotation_repository.get_annotations(current_frame)  
+        use_original_track_id = True  
+        
+        if frame_annotation and frame_annotation.objects:  
+            for existing_annotation in frame_annotation.objects:  
+                # confidence閾値以上のアノテーションのみをチェック対象とする  
+                if (existing_annotation.is_manual or existing_annotation.bbox.confidence >= threshold):  
+                    # 同じラベルで同じTrack IDのアノテーションが既に存在するかチェック  
+                    if (existing_annotation.label == self.menu_panel.clipboard_annotation.label and   
+                        existing_annotation.object_id == self.menu_panel.clipboard_annotation.object_id):  
+                        use_original_track_id = False  
+                        break 
+        
+        # Track IDを決定  
+        target_object_id = self.menu_panel.clipboard_annotation.object_id if use_original_track_id else -1  
+        
+        # 新しいアノテーションを作成  
+        new_annotation = ObjectAnnotation(  
+            object_id=target_object_id,  
+            frame_id=current_frame,  
+            bbox=BoundingBox(  
+                self.menu_panel.clipboard_annotation.bbox.x1,  
+                self.menu_panel.clipboard_annotation.bbox.y1,  
+                self.menu_panel.clipboard_annotation.bbox.x2,  
+                self.menu_panel.clipboard_annotation.bbox.y2,  
+                confidence=1.0  
+            ),  
+            label=self.menu_panel.clipboard_annotation.label,  
+            is_manual=True,  
+            track_confidence=1.0,  
+            is_manual_added=True  
+        )  
+        
+        # コマンドパターンでアノテーション追加  
+        command = AddAnnotationCommand(self.annotation_repository, new_annotation)  
+        if self.command_manager.execute_command(command):  
+            self.update_annotation_count()  
+            self.video_preview.update_frame_display()  
+            
+            # 新しく作成されたアノテーションを選択状態にする  
+            self.video_preview.bbox_editor.selected_annotation = new_annotation  
+            self.video_preview.bbox_editor.selection_changed.emit(new_annotation)  
+            
+            track_id_info = f"(Track ID: {new_annotation.object_id})" if use_original_track_id else f"(New Track ID: {new_annotation.object_id})"  
+            print(f"--- Pasted annotation: {new_annotation.label} at frame {current_frame} {track_id_info} ---")  
+        else:  
+            ErrorHandler.show_error_dialog("Failed to paste annotation.", "Paste Error")
+
+    @ErrorHandler.handle_with_dialog("Tracking Error")  
+    def start_tracking(self, assigned_track_id: int, assigned_label: str):  
+        """自動追跡を開始"""  
+        if not self.object_tracker:  
+            ErrorHandler.show_warning_dialog("MASA models are still loading. Please wait.", "Warning")  
+            return  
+        
+        # ObjectTrackerの実際の初期化（まだされていない場合）  
+        if not self.object_tracker.initialized:  
+            try:  
+                self.object_tracker.initialize()  
+            except Exception as e:  
+                ErrorHandler.show_error_dialog(f"Failed to initialize MASA models: {str(e)}", "Initialization Error")  
+                return  
+    
+        if not self.video_manager:  
+            ErrorHandler.show_warning_dialog("Please load a video file first", "Warning")  
+            return  
+            
+        start_frame, end_frame = self.video_control.get_selected_range()  
+        
+        # temp_tracking_annotationsから初期アノテーションを取得  
+        initial_annotations_for_worker = []  
+        temp_annotations = self.video_preview.temp_tracking_annotations  
+        for ann_obj in temp_annotations:  # タプル展開を削除  
+            ann_obj.label = assigned_label  # ラベルを上書き  
+            initial_annotations_for_worker.append((ann_obj.frame_id, ann_obj.bbox))  # frame_idはann_objから取得
+    
+        frame_count = end_frame - start_frame + 1  
+        reply = QMessageBox.question(  
+            self, "Confirm Tracking",  
+            f"Start automatic tracking from frame {start_frame} to {end_frame}?\n"  
+            f"Total frames to process: {frame_count}\n"  
+            f"This may take several minutes.",  
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No  
+        )  
+        
+        if reply == QMessageBox.StandardButton.Yes:  
+            # 動画の幅と高さを取得  
+            video_width = self.video_manager.get_video_width()  
+            video_height = self.video_manager.get_video_height()  
+        
+            self.tracking_worker = TrackingWorker(  
+                self.video_manager,  
+                self.annotation_repository,  
+                self.object_tracker,  
+                start_frame,  
+                end_frame,  
+                initial_annotations_for_worker,  
+                assigned_track_id,  
+                assigned_label,  
+                video_width, video_height  
+            )  
+            self.tracking_worker.tracking_completed.connect(self.on_tracking_completed)  
+            self.tracking_worker.progress_updated.connect(self.on_tracking_progress)  
+            self.tracking_worker.error_occurred.connect(self.on_tracking_error)  
+            self.tracking_worker.start()  
+            
+    def start_copy_annotations(self, assigned_track_id: int, assigned_label: str):  
+        """選択されたアノテーションを指定範囲にコピー"""  
+        if not self.video_manager:  
+            ErrorHandler.show_warning_dialog("Please load a video file first.", "Warning")  
+            return  
+        
+        # 選択されたアノテーションを取得  
+        selected_annotation = self.menu_panel.annotation_tab.current_selected_annotation  
+        if not selected_annotation:  
+            ErrorHandler.show_warning_dialog("Please select an annotation to copy.", "Warning")  
+            return  
+        
+        # フレーム範囲の取得  
+        start_frame, end_frame = self.video_control.get_selected_range()  
+        if start_frame == -1 or end_frame == -1:  
+            ErrorHandler.show_warning_dialog("No frame range selected.", "Warning")  
+            return  
+        
+        frame_count = end_frame - start_frame + 1  
+        reply = QMessageBox.question(  
+            self, "Confirm Copy",  
+            f"Copy annotation '{assigned_label}' from frame {start_frame} to {end_frame}?\n"  
+            f"Total frames to process: {frame_count}",  
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No  
+        )  
+        
+        if reply == QMessageBox.StandardButton.Yes:  
+            # 各フレームにアノテーションをコピー  
+            from DataClass import ObjectAnnotation, BoundingBox  
+            from CommandPattern import AddAnnotationCommand  
+            
+            for frame_id in range(start_frame, end_frame + 1):  
+                new_annotation = ObjectAnnotation(  
+                    object_id=assigned_track_id,  
+                    frame_id=frame_id,  
+                    bbox=BoundingBox(  
+                        selected_annotation.bbox.x1,  
+                        selected_annotation.bbox.y1,  
+                        selected_annotation.bbox.x2,  
+                        selected_annotation.bbox.y2,  
+                        confidence=1.0  
+                    ),  
+                    label=assigned_label,  
+                    is_manual=True,  
+                    track_confidence=1.0,  
+                    is_manual_added=True  
+                )  
+                
+                command = AddAnnotationCommand(self.annotation_repository, new_annotation)  
+                self.command_manager.execute_command(command)  
+            
+            self.update_annotation_count()  
+            self.video_preview.update_frame_display()  
+                        
+            ErrorHandler.show_info_dialog(f"Copied {frame_count} annotations with label '{assigned_label}'", "Copy Complete")
+        else:
+            pass
+
+        # すべてのモードを初期状態に戻す  
+        #self.reset_all_modes_to_initial_state()
+
+    def reset_all_modes_to_initial_state(self):  
+        """すべてのモードを初期状態に戻す"""  
+        # すべてのモードボタンをOFFにする  
+        self.menu_panel.annotation_tab.edit_mode_btn.setChecked(False)  
+        self.menu_panel.annotation_tab.tracking_annotation_btn.setChecked(False)  
+        self.menu_panel.annotation_tab.copy_annotations_btn.setChecked(False)  
+        
+        # すべてのモードボタンを有効化  
+        self.menu_panel.annotation_tab.edit_mode_btn.setEnabled(True)  
+        self.menu_panel.annotation_tab.tracking_annotation_btn.setEnabled(True)  
+        self.menu_panel.annotation_tab.copy_annotations_btn.setEnabled(True)  
+        
+        # execute_add_btnを無効化  
+        self.menu_panel.annotation_tab.execute_add_btn.setEnabled(False)  
+        
+        # VideoPreviewWidgetをviewモードに設定  
+        self.video_preview.set_mode('view')  
+        
+        # 一時的なアノテーションをクリア  
+        self.video_preview.clear_temp_tracking_annotations()  
+
+        # workerをクリア
+        self.tracking_worker = None  
+        
+        # 選択状態をクリア  
+        self.video_preview.bbox_editor.selected_annotation = None  
+        self.video_preview.bbox_editor.selection_changed.emit(None)  
+        
+        # 表示を更新  
+        self.video_preview.update_frame_display()
 
     def closeEvent(self, event):  
         """アプリケーション終了時のクリーンアップ"""  

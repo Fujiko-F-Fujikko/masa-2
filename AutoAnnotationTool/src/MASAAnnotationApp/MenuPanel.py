@@ -1,11 +1,7 @@
 # MenuPanel.py  
-from typing import Dict, List, Any, Optional  
-from pathlib import Path  
+from typing import List, Optional  
 from PyQt6.QtWidgets import (  
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,  
-    QPushButton, QGroupBox, QCheckBox, QLineEdit,  
-    QMessageBox, QTabWidget, QComboBox, QFileDialog,  
-    QDoubleSpinBox, QDialog, QTextEdit, QSplitter  
+    QWidget, QVBoxLayout, QLabel, QTabWidget
 )  
 from PyQt6.QtCore import Qt, pyqtSignal  
 from PyQt6.QtGui import QFont, QKeyEvent  
@@ -16,7 +12,6 @@ from ObjectListTabWidget import ObjectListTabWidget
 from LicenseTabWidget import LicenseTabWidget  
 from ConfigManager import ConfigManager  
 from DataClass import ObjectAnnotation
-from ErrorHandler import ErrorHandler  
   
 class MenuPanel(QWidget):  
     """タブベースの左側メニューパネル（分割版）"""  
@@ -257,15 +252,7 @@ class MenuPanel(QWidget):
     @current_selected_annotation.setter  
     def current_selected_annotation(self, value):  
         self.annotation_tab.current_selected_annotation = value  
-      
-    @property  
-    def current_selected_annotation_label(self):  
-        return self.annotation_tab.current_selected_annotation_label  
-      
-    @current_selected_annotation_label.setter  
-    def current_selected_annotation_label(self, value):  
-        self.annotation_tab.current_selected_annotation_label = value  
-      
+            
     # 各タブのUIコンポーネントへのアクセス用プロパティ  
     @property  
     def edit_mode_btn(self):  

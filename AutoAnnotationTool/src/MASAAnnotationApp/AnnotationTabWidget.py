@@ -2,17 +2,15 @@
 from typing import Dict, List, Any, Optional  
 from PyQt6.QtWidgets import (  
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,  
-    QPushButton, QGroupBox, QCheckBox, QLineEdit,  
+    QPushButton, QGroupBox, QLineEdit,  
     QMessageBox, QComboBox, QDialog  
 )  
-from PyQt6.QtCore import Qt, pyqtSignal  
-from PyQt6.QtGui import QFont, QKeyEvent  
+from PyQt6.QtCore import pyqtSignal  
   
 from ConfigManager import ConfigManager  
 from ErrorHandler import ErrorHandler  
 from DataClass import ObjectAnnotation, BoundingBox  
 from AnnotationInputDialog import AnnotationInputDialog  
-from CommandPattern import AddAnnotationCommand  
   
 class AnnotationTabWidget(QWidget):  
     """アノテーション編集タブウィジェット（編集・トラッキング・コピー機能）"""  
@@ -43,7 +41,6 @@ class AnnotationTabWidget(QWidget):
           
         # アノテーション選択状態  
         self.current_selected_annotation: Optional[ObjectAnnotation] = None  
-        self.current_selected_annotation_label: Optional[str] = None  
           
         self.setup_ui()  
       
@@ -86,7 +83,7 @@ class AnnotationTabWidget(QWidget):
           
         self.label_combo = QComboBox()  
         self.label_combo.setEditable(True)  
-        self.label_combo.setEnabled(False)  
+        self.label_combo.setEnabled(True)  
         self.label_combo.currentIndexChanged.connect(self._on_label_changed)  
         edit_layout.addWidget(QLabel("Label:"))  
         edit_layout.addWidget(self.label_combo)  
@@ -272,66 +269,170 @@ class AnnotationTabWidget(QWidget):
             ErrorHandler.show_info_dialog("Copy mode disabled.", "Mode Change")  
           
         self.main_widget.video_preview.update_frame_display()  
-
-    def start_tracking(self, assigned_track_id: int, assigned_label: str):  
-        """自動追跡を開始（MASAAnnotationWidgetから移動）"""  
-        self.tracking_requested.emit(assigned_track_id, assigned_label)  
-  
-    def start_copy_annotations(self, assigned_track_id: int, assigned_label: str):  
-        """選択されたアノテーションのコピーを開始（MASAAnnotationWidgetから移動）"""  
-        self.copy_annotations_requested.emit(assigned_track_id, assigned_label)  
-  
+    
     # イベントハンドラー  
     def _on_edit_mode_clicked(self, checked: bool):  
         """編集モードボタンクリック時の処理"""  
+        if checked:  
+            # Edit Modeがオンの時は他のモードボタンを無効化  
+            self.tracking_annotation_btn.setEnabled(False)  
+            self.copy_annotations_btn.setEnabled(False)  
+            
+            # 他のモードがオンの場合はオフにする  
+            if self.tracking_annotation_btn.isChecked():  
+                self.tracking_annotation_btn.setChecked(False)  
+                self.set_tracking_mode(False)  
+            if self.copy_annotations_btn.isChecked():  
+                self.copy_annotations_btn.setChecked(False)  
+                self.set_copy_mode(False)  
+        else:  
+            # Edit Modeがオフの時は他のモードボタンを有効化  
+            self.tracking_annotation_btn.setEnabled(True)  
+            self.copy_annotations_btn.setEnabled(True)  
+        
         self.edit_mode_requested.emit(checked)  
-  
+
     def _on_tracking_annotation_clicked(self, checked: bool):  
         """トラッキングモードボタンクリック時の処理"""  
         if checked:  
+            # Tracking Modeがオンの時は他のモードボタンを無効化  
+            self.edit_mode_btn.setEnabled(False)  
+            self.copy_annotations_btn.setEnabled(False)  
+            
+            # 他のモードがオンの場合はオフにする  
+            if self.edit_mode_btn.isChecked():  
+                self.edit_mode_btn.setChecked(False)  
+                # edit_mode_requestedシグナルを発行してedit modeを無効化  
+                self.edit_mode_requested.emit(False)  
+            if self.copy_annotations_btn.isChecked():  
+                self.copy_annotations_btn.setChecked(False)  
+                self.set_copy_mode(False)  
+            
             self.set_tracking_mode(True)  
         else:  
+            # Tracking Modeがオフの時は他のモードボタンを有効化  
+            self.edit_mode_btn.setEnabled(True)  
+            self.copy_annotations_btn.setEnabled(True)  
             self.set_tracking_mode(False)  
-        self.tracking_mode_requested.emit(checked)  
+        
+        self.tracking_mode_requested.emit(checked)
   
     def _on_copy_annotations_clicked(self, checked: bool):  
         """コピーモードボタンクリック時の処理"""  
         if checked:  
+            # Copy Modeがオンの時は他のモードボタンを無効化  
+            self.edit_mode_btn.setEnabled(False)  
+            self.tracking_annotation_btn.setEnabled(False)  
+            
+            # 他のモードがオンの場合はオフにする  
+            if self.edit_mode_btn.isChecked():  
+                self.edit_mode_btn.setChecked(False)  
+                # edit_mode_requestedシグナルを発行してedit modeを無効化  
+                self.edit_mode_requested.emit(False)  
+            if self.tracking_annotation_btn.isChecked():  
+                self.tracking_annotation_btn.setChecked(False)  
+                self.set_tracking_mode(False)  
+            
             self.set_copy_mode(True)  
         else:  
+            # Copy Modeがオフの時は他のモードボタンを有効化  
+            self.edit_mode_btn.setEnabled(True)  
+            self.tracking_annotation_btn.setEnabled(True)  
             self.set_copy_mode(False)  
-        self.copy_mode_requested.emit(checked)  
+        
+        self.copy_mode_requested.emit(checked)
   
     def _on_label_changed(self, index: int):  
         """ラベル変更時の処理"""  
         if self.current_selected_annotation and index >= 0:  
             new_label = self.label_combo.currentText().strip()  
             if new_label and new_label != self.current_selected_annotation.label:  
-                self.label_change_requested.emit(self.current_selected_annotation, new_label)  
+                self.label_change_requested.emit(self.current_selected_annotation, new_label)
   
     def _on_delete_single_annotation_clicked(self):  
         """単一アノテーション削除ボタンクリック時の処理"""  
-        if self.current_selected_annotation:  
-            self.delete_single_annotation_requested.emit(self.current_selected_annotation)  
+        if not self.current_selected_annotation:  
+            return  
+            
+        reply = QMessageBox.question(  
+            self, "Confirm Delete Annotation",  
+            f"Do you want to delete the annotation for SELECTED frame {self.current_selected_annotation.frame_id} (ID: {self.current_selected_annotation.object_id}, label: '{self.current_selected_annotation.label}')?",  
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No  
+        )  
+        
+        if reply == QMessageBox.StandardButton.Yes:  
+            self.delete_single_annotation_requested.emit(self.current_selected_annotation)
   
     def _on_delete_track_clicked(self):  
         """トラック削除ボタンクリック時の処理"""  
-        if self.current_selected_annotation:  
-            self.delete_track_requested.emit(self.current_selected_annotation.object_id)  
+        if not self.current_selected_annotation:  
+            return  
+            
+        track_id_to_delete = self.current_selected_annotation.object_id  
+        reply = QMessageBox.question(  
+            self, "Confirm ALL Track Deletion",  
+            f"Do you want to delete ALL annotations with Track ID '{track_id_to_delete}'?\n"  
+            "This action cannot be undone.",  
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No  
+        )  
+        
+        if reply == QMessageBox.StandardButton.Yes:  
+            self.delete_track_requested.emit(track_id_to_delete)
   
     def _on_propagate_label_clicked(self):  
         """ラベル伝播ボタンクリック時の処理"""  
-        if self.current_selected_annotation:  
-            new_label = self.label_combo.currentText().strip()  
-            if new_label:  
-                self.propagate_label_requested.emit(self.current_selected_annotation.object_id, new_label)  
+        if not self.current_selected_annotation:  
+            return  
+            
+        track_id_to_change = self.current_selected_annotation.object_id  
+        current_label = self.current_selected_annotation.label  
+        
+        # 既存のラベル一覧を取得  
+        existing_labels = self.annotation_repository.get_all_labels()  
+        
+        # ダイアログでラベル入力  
+        dialog = AnnotationInputDialog(  
+            BoundingBox(0, 0, 1, 1),  
+            existing_labels=existing_labels,  
+            default_label=current_label  
+        )  
+        dialog.setWindowTitle(f"Change Label for ALL with Track ID {track_id_to_change}")  
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:  
+            new_label = dialog.get_label()  
+            if not new_label:  
+                ErrorHandler.show_warning_dialog("No label selected.", "Warning")  
+                return  
+                
+            # 確認ダイアログ  
+            reply = QMessageBox.question(  
+                self, "Confirm ALL Track Label Change",  
+                f"Do you want to change the label of ALL annotations with Track ID '{track_id_to_change}' to '{new_label}'?",  
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No  
+            )  
+            
+            if reply == QMessageBox.StandardButton.Yes:  
+                self.propagate_label_requested.emit(track_id_to_change, new_label)  
+        else:  
+            ErrorHandler.show_info_dialog("Label selection was cancelled.", "Info")
   
     def _on_align_track_ids_clicked(self):  
         """Track ID統一ボタンクリック時の処理"""  
-        if self.current_selected_annotation:  
-            target_label = self.current_selected_annotation.label  
-            target_track_id = self.current_selected_annotation.object_id  
-            self.align_track_ids_requested.emit(target_label, target_track_id)  
+        if not self.current_selected_annotation:  
+            return  
+            
+        target_label = self.current_selected_annotation.label  
+        target_track_id = self.current_selected_annotation.object_id  
+        
+        reply = QMessageBox.question(  
+            self, "Confirm Track ID Alignment",  
+            f"Do you want to align ALL annotations with label '{target_label}' to Track ID '{target_track_id}'?\n"  
+            "This will change the Track ID of all annotations with the same label.",  
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No  
+        )  
+        
+        if reply == QMessageBox.StandardButton.Yes:  
+            self.align_track_ids_requested.emit(target_label, target_track_id)
   
     def _on_copy_annotation_clicked(self):  
         """アノテーションコピーボタンクリック時の処理"""  
@@ -376,7 +477,7 @@ class AnnotationTabWidget(QWidget):
   
         # 共通ラベル入力ダイアログを表示  
         existing_labels = self.annotation_repository.get_all_labels()  
-        dialog = AnnotationInputDialog(None, self, existing_labels=existing_labels)  
+        dialog = AnnotationInputDialog(None, existing_labels=existing_labels)  
         dialog.setWindowTitle("Select Common Label for Tracking Added Annotations")  
   
         if dialog.exec() == QDialog.DialogCode.Accepted:  
@@ -400,16 +501,24 @@ class AnnotationTabWidget(QWidget):
         if not self.current_selected_annotation:  
             ErrorHandler.show_warning_dialog("Please select an annotation to copy.", "Warning")  
             return  
-  
+    
         start_frame, end_frame = self.main_widget.video_control.get_selected_range()  
         if start_frame == -1 or end_frame == -1:  
             ErrorHandler.show_warning_dialog("No frame range selected.", "Warning")  
             return  
-  
+    
         existing_labels = self.annotation_repository.get_all_labels()  
-        dialog = AnnotationInputDialog(None, self, existing_labels=existing_labels)  
-        dialog.setWindowTitle("Select Label for Copied Annotations")  
-  
+        
+        # コピー元のラベルをデフォルトとして設定  
+        default_label = self.current_selected_annotation.label  
+        
+        dialog = AnnotationInputDialog(  
+            None,   
+            existing_labels=existing_labels,  
+            default_label=default_label  
+        )  
+        dialog.setWindowTitle("Select Label for Copied Annotations")    
+ 
         if dialog.exec() == QDialog.DialogCode.Accepted:  
             assigned_label = dialog.get_label()  
             if not assigned_label:  
@@ -425,37 +534,74 @@ class AnnotationTabWidget(QWidget):
     def update_selected_annotation_info(self, annotation: Optional[ObjectAnnotation]):  
         """選択されたアノテーション情報を更新"""  
         self.current_selected_annotation = annotation  
-          
-        if annotation:  
-            self.current_selected_annotation_label = annotation.label  
-            self.label_combo.setCurrentText(annotation.label)  
-            self.track_id_edit.setText(str(annotation.object_id))  
-              
-            # ボタンの有効化  
-            self.delete_single_annotation_btn.setEnabled(True)  
-            self.delete_track_btn.setEnabled(True)  
-            self.propagate_label_btn.setEnabled(True)  
-            self.align_track_ids_btn.setEnabled(True)  
-            self.copy_annotation_btn.setEnabled(True)  
-        else:  
-            self.current_selected_annotation_label = None  
-            self.label_combo.setCurrentText("")  
-            self.track_id_edit.setText("")  
-              
-            # ボタンの無効化  
-            self.delete_single_annotation_btn.setEnabled(False)  
-            self.delete_track_btn.setEnabled(False)  
-            self.propagate_label_btn.setEnabled(False)  
-            self.align_track_ids_btn.setEnabled(False)  
-            self.copy_annotation_btn.setEnabled(False)  
+        self.label_combo.blockSignals(True)  # シグナルを一時的にブロック  
+        
+        try:  
+            if annotation:  
+                self.current_selected_annotation_label = annotation.label  
+                
+                # 既存のラベルをコンボボックスに追加（重複チェック）  
+                current_labels = [self.label_combo.itemText(i) for i in range(self.label_combo.count())]  
+                if annotation.label not in current_labels:  
+                    self.label_combo.addItem(annotation.label)  
+                
+                # 現在のラベルを選択  
+                index = self.label_combo.findText(annotation.label)  
+                if index >= 0:  
+                    self.label_combo.setCurrentIndex(index)  
+                else:  
+                    self.label_combo.addItem(annotation.label)  
+                    self.label_combo.setCurrentText(annotation.label)  
+                
+                self.track_id_edit.setText(str(annotation.object_id))  
+                
+                # ボタンの有効化  
+                self.delete_single_annotation_btn.setEnabled(True)  
+                self.delete_track_btn.setEnabled(True)  
+                self.propagate_label_btn.setEnabled(True)  
+                self.align_track_ids_btn.setEnabled(True)  
+                self.copy_annotation_btn.setEnabled(True)  
+            else:  
+                self.current_selected_annotation_label = None  
+                self.label_combo.setCurrentText("")  
+                self.track_id_edit.setText("")  
+                
+                # ボタンの無効化  
+                self.delete_single_annotation_btn.setEnabled(False)  
+                self.delete_track_btn.setEnabled(False)  
+                self.propagate_label_btn.setEnabled(False)  
+                self.align_track_ids_btn.setEnabled(False)  
+                self.copy_annotation_btn.setEnabled(False)  
+        finally:  
+            self.label_combo.blockSignals(False)  # シグナルブロックを解除
   
     def initialize_label_combo(self, labels: List[str]):  
         """ラベルコンボボックスを初期化"""  
-        current_text = self.label_combo.currentText()  
-        self.label_combo.clear()  
-        self.label_combo.addItems(labels)  
-        if current_text:  
-            self.label_combo.setCurrentText(current_text)  
+        # 現在選択されているラベルを一時的に保持  
+        current_selected_label = self.label_combo.currentText()  
+        
+        self.label_combo.blockSignals(True)  # シグナルを一時的にブロック  
+        self.label_combo.clear()  # 既存のアイテムをクリア  
+        
+        # 新しいラベルを追加  
+        for label in sorted(list(set(labels))):  # 重複を排除しソート  
+            self.label_combo.addItem(label)  
+        
+        # 以前選択されていたラベルを再設定  
+        if current_selected_label and self.label_combo.findText(current_selected_label) >= 0:  
+            self.label_combo.setCurrentText(current_selected_label)  
+        elif self.current_selected_annotation:  # 現在選択中のアノテーションのラベルを優先  
+            index = self.label_combo.findText(self.current_selected_annotation.label)  
+            if index >= 0:  
+                self.label_combo.setCurrentIndex(index)  
+            else:  
+                # もし現在のラベルがリストにない場合は追加して選択  
+                self.label_combo.addItem(self.current_selected_annotation.label)  
+                self.label_combo.setCurrentText(self.current_selected_annotation.label)  
+        elif self.label_combo.count() > 0:  
+            self.label_combo.setCurrentIndex(0)  # リストが空でなければ最初の要素を選択  
+            
+        self.label_combo.blockSignals(False)  # シグナルブロックを解除
   
     def update_range_info(self, start_frame: int, end_frame: int):  
         """範囲情報を更新"""  
