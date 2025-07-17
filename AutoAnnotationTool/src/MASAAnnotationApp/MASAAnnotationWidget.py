@@ -86,7 +86,9 @@ class MASAAnnotationWidget(QWidget):
         right_layout.addWidget(self.video_preview)    
             
         # VideoControlPanelに必要な参照を渡す  
-        self.video_control = VideoControlPanel(self)    
+        self.video_control = VideoControlPanel(self)  
+        # VideoPreviewWidgetにConfigManagerを設定  
+        self.video_preview.set_config_manager(self.config_manager)  
         right_layout.addWidget(self.video_control)    
             
         right_widget = QWidget()    
@@ -117,10 +119,10 @@ class MASAAnnotationWidget(QWidget):
         self.video_control.frame_changed.connect(self.video_preview.set_frame)    
         self.video_control.range_frame_preview.connect(self.video_preview.set_frame)  
   
-        # 再生制御関連  
-        self.menu_panel.play_requested.connect(self.start_playback)    
-        self.menu_panel.pause_requested.connect(self.pause_playback)    
-          
+        # 再生制御関連 - BasicTabWidgetから直接接続  
+        self.menu_panel.basic_tab.play_requested.connect(self.start_playback)      
+        self.menu_panel.basic_tab.pause_requested.connect(self.pause_playback)
+
         # アノテーション操作関連（削除・ラベル変更・Track ID統一）  
         self.menu_panel.label_change_requested.connect(self.on_label_change_requested)    
         self.menu_panel.delete_single_annotation_requested.connect(self.on_delete_annotation_requested)    
@@ -128,6 +130,12 @@ class MASAAnnotationWidget(QWidget):
         self.menu_panel.propagate_label_requested.connect(self.on_propagate_label_requested)    
         self.menu_panel.align_track_ids_requested.connect(self.on_align_track_ids_requested)  
   
+        # 設定変更関連
+        self.menu_panel.config_changed.connect(self.on_config_changed)
+
+        # VideoPreviewWidgetからのアノテーション選択シグナルを接続  
+        self.video_preview.annotation_selected.connect(self.on_annotation_selected)
+
     # 残存する主要メソッド（コンポーネント間調整役）  
     def set_edit_mode(self, enabled: bool):    
         """編集モードの設定とUIの更新"""    
@@ -149,7 +157,7 @@ class MASAAnnotationWidget(QWidget):
     def start_playback(self):    
         """動画再生を開始"""    
         if self.playback_controller:    
-            self.playback_controller.play()    
+            self.playback_controller.play(self.video_control.current_frame)    
             self.menu_panel.basic_tab.set_play_button_state(True)  
   
     def pause_playback(self):    
@@ -376,6 +384,47 @@ class MASAAnnotationWidget(QWidget):
           
         return filtered_annotations  
   
+    def on_config_changed(self, key: str, value: object, config_type: str):  
+        """設定変更時の処理"""  
+        if config_type == "display":  
+            display_options = self.config_manager.get_full_config(config_type="display")  
+            
+            # VideoPreviewWidgetの設定更新  
+            self.video_preview.set_display_options(  
+                display_options.show_manual_annotations,  
+                display_options.show_auto_annotations,  
+                display_options.show_ids,  
+                display_options.show_confidence,  
+                display_options.score_threshold  
+            )  
+            
+            # ObjectListTabWidgetの設定更新を追加  
+            self.menu_panel.set_object_list_score_threshold(display_options.score_threshold)  
+            
+            # ObjectListTabWidgetのチェックボックス状態も同期  
+            self.menu_panel.object_list_tab.show_manual_cb.setChecked(display_options.show_manual_annotations)  
+            self.menu_panel.object_list_tab.show_auto_cb.setChecked(display_options.show_auto_annotations)  
+            self.menu_panel.object_list_tab._apply_filters()
+
+    def on_annotation_selected(self, annotation: Optional[ObjectAnnotation]):  
+        """アノテーション選択時の処理（中央集権的制御）"""  
+        if hasattr(self, '_updating_selection') and self._updating_selection:  
+            return  
+            
+        self._updating_selection = True  
+        try:  
+            # MenuPanelの情報を更新  
+            self.menu_panel.update_selected_annotation_info(annotation)  
+            
+            # ObjectListTabWidgetの選択状態も更新（双方向同期）  
+            self.menu_panel.update_object_list_selection(annotation)  
+            
+            # Undo/Redoボタンの状態も更新  
+            if hasattr(self.menu_panel, 'update_undo_redo_buttons'):  
+                self.menu_panel.update_undo_redo_buttons(self.command_manager)  
+        finally:  
+            self._updating_selection = False
+
     def closeEvent(self, event):  
         """アプリケーション終了時のクリーンアップ"""  
         # VideoManagerのリソースを解放  
